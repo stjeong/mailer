@@ -7,3 +7,6 @@ obj/
 
 # Local Claude conversation logs
 .claude.conv.*.txt
+requirements.txt
+# Project requirements notes (never pushed)
+requirements.txt
