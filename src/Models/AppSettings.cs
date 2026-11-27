@@ -55,7 +55,7 @@ public class AppSettings
 
     public List<MailAccount> Accounts { get; set; } = [];
     public JunkSettings Junk { get; set; } = new();
-    /// <summary>받은 메일 규칙. 지금은 설정 창에서 첫 번째 규칙 하나만 편집합니다.
+    /// <summary>받은 메일 규칙 목록 (설정 > 규칙 탭에서 추가/편집/삭제).
     /// 저장 폴더가 PC 마다 다르므로 설정 내보내기에는 포함하지 않음</summary>
     public List<MailRule> Rules { get; set; } = [];
 
