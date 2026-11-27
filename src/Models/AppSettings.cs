@@ -26,6 +26,19 @@ public class JunkSettings
     public int Threshold { get; set; } = 5;
 }
 
+/// <summary>
+/// 받은 메일 규칙: <see cref="Sender"/> 에게서 온 메일을 <see cref="SaveDirectory"/> 에 .eml 파일로 저장.
+/// 메일은 받은 편지함(또는 정크 판정 시 Junk Email)에도 그대로 들어갑니다.
+/// </summary>
+public class MailRule
+{
+    public bool Enabled { get; set; } = true;
+    /// <summary>보낸 사람(From) 이메일 주소 (대소문자 무시)</summary>
+    public string Sender { get; set; } = "";
+    /// <summary>.eml 을 저장할 폴더 (환경 변수 사용 가능)</summary>
+    public string SaveDirectory { get; set; } = "";
+}
+
 public class AppSettings
 {
     /// <summary>새 메일 확인 주기 (분)</summary>
@@ -42,6 +55,9 @@ public class AppSettings
 
     public List<MailAccount> Accounts { get; set; } = [];
     public JunkSettings Junk { get; set; } = new();
+    /// <summary>받은 메일 규칙. 지금은 설정 창에서 첫 번째 규칙 하나만 편집합니다.
+    /// 저장 폴더가 PC 마다 다르므로 설정 내보내기에는 포함하지 않음</summary>
+    public List<MailRule> Rules { get; set; } = [];
 
     // 창 상태
     /// <summary>창 크기 (96 DPI 기준 논리 단위 - 화면 배율이 달라도 같은 크기로 보이도록)</summary>

@@ -13,18 +13,23 @@ namespace MailClient.Services;
 /// <param name="SyncError">서버 변경 반영 중 오류 (없으면 null)</param>
 /// <param name="RemovedCount">서버 INBOX 에서 없어져 로컬 Deleted Items 로 옮긴 메일 수</param>
 /// <param name="NewItems">받은 편지함에 새로 들어온 메일 (정크 제외, 알림 표시용)</param>
-public sealed record CheckResult(int NewCount, int JunkCount, string? SyncError = null, int RemovedCount = 0, IReadOnlyList<MailItem>? NewItems = null);
+/// <param name="RuleSavedCount">규칙에 따라 .eml 로 저장한 메일 수</param>
+/// <param name="RuleError">규칙 적용(.eml 저장) 중 오류 (없으면 null)</param>
+public sealed record CheckResult(int NewCount, int JunkCount, string? SyncError = null, int RemovedCount = 0, IReadOnlyList<MailItem>? NewItems = null,
+    int RuleSavedCount = 0, string? RuleError = null);
 
 /// <summary>POP3/IMAP 수신, SMTP 발신 (서버 변경 반영은 MailService.ServerSync.cs)</summary>
 public partial class MailService
 {
     private readonly MailStore _store;
     private readonly Func<JunkSettings> _junkSettings;
+    private readonly Func<IReadOnlyList<MailRule>> _rules;
 
-    public MailService(MailStore store, Func<JunkSettings> junkSettings)
+    public MailService(MailStore store, Func<JunkSettings> junkSettings, Func<IReadOnlyList<MailRule>> rules)
     {
         _store = store;
         _junkSettings = junkSettings;
+        _rules = rules;
     }
 
     // ---------------- 인증 ----------------
@@ -101,13 +106,31 @@ public partial class MailService
         }
         uint uidValidity = account.Protocol == IncomingProtocol.Imap ? _store.GetSyncState(account.Id).ImapUidValidity : 0;
 
-        int junk = 0, added = 0;
+        int junk = 0, added = 0, ruleSaved = 0;
+        string? ruleError = null;
         var newItems = new List<MailItem>();
         var junkSettings = _junkSettings();
+        var rules = _rules().Where(r => r.Enabled).ToList();
         foreach (var (message, serverId, seen) in downloaded)
         {
             if (_store.ContainsMessageId(account.Id, message.MessageId ?? "")) continue;
             added++;
+
+            // 규칙: 지정한 보낸 사람의 메일을 폴더에 .eml 로 저장 (정크 판정과 무관, 저장에 실패해도 받기는 계속)
+            foreach (var rule in rules.Where(r => MailRules.Matches(r, message)))
+            {
+                try
+                {
+                    var saved = MailRules.SaveEml(rule, message);
+                    ruleSaved++;
+                    Log.Write($"Rule [{account.EmailAddress}] '{message.Subject}' from {rule.Sender} → {saved}");
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"rule save {rule.Sender} → {rule.SaveDirectory}", ex);
+                    ruleError ??= ex.Message;
+                }
+            }
 
             var verdict = JunkFilter.Evaluate(message, junkSettings, account);
             var folder = verdict.IsJunk ? MailFolder.JunkEmail : MailFolder.Inbox;
@@ -121,7 +144,7 @@ public partial class MailService
             else newItems.Add(item);
         }
         if (added > 0) _store.NotifyChanged(account.Id);
-        return new CheckResult(added - junk, junk, syncError, goneFromServer.Count, newItems);
+        return new CheckResult(added - junk, junk, syncError, goneFromServer.Count, newItems, ruleSaved, ruleError);
     }
 
     /// <summary>INBOX 의 새 메일을 받고, 최근 메일 중 서버에서 없어진 로컬 메일을 찾습니다.</summary>

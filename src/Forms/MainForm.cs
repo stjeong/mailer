@@ -75,7 +75,7 @@ public class MainForm : DpiForm
     {
         _settings = SettingsService.Load();
         _store = OpenInitialStore();
-        _mail = new MailService(_store, () => _settings.Junk);
+        _mail = new MailService(_store, () => _settings.Junk, () => _settings.Rules);
 
         Text = "MailClient";
         Font = new Font("Malgun Gothic", 9f);
@@ -1790,7 +1790,7 @@ public class MainForm : DpiForm
             DetachStore(old);
             _store = newStore;
             AttachStore(newStore);
-            _mail = new MailService(_store, () => _settings.Junk);
+            _mail = new MailService(_store, () => _settings.Junk, () => _settings.Rules);
             old.Dispose();
 
             _settings.DatabasePath = configured;
@@ -1892,7 +1892,7 @@ public class MainForm : DpiForm
         UpdateNextCheckLabel();
         UpdateCommandStates();
 
-        int totalNew = 0, totalJunk = 0, totalRemoved = 0;
+        int totalNew = 0, totalJunk = 0, totalRemoved = 0, totalRuleSaved = 0;
         var newItems = new List<MailItem>();
         var errors = new List<string>();
         try
@@ -1908,6 +1908,8 @@ public class MainForm : DpiForm
                     totalJunk += r.JunkCount;
                     if (r.SyncError != null) errors.Add($"[{account}] 서버 반영: {r.SyncError}");
                     totalRemoved += r.RemovedCount;
+                    totalRuleSaved += r.RuleSavedCount;
+                    if (r.RuleError != null) errors.Add($"[{account}] 규칙(.eml 저장): {r.RuleError}");
                 }
                 catch (OperationCanceledException)
                 {
@@ -1934,7 +1936,8 @@ public class MainForm : DpiForm
         ApplyCheckInterval();
 
         var msg = $"메일 확인 완료 ({DateTime.Now:HH:mm}) - 새 메일 {totalNew}개" + (totalJunk > 0 ? $", 정크 {totalJunk}개" : "")
-                  + (totalRemoved > 0 ? $", 서버에서 삭제된 메일 {totalRemoved}개를 Deleted Items로 이동" : "");
+                  + (totalRemoved > 0 ? $", 서버에서 삭제된 메일 {totalRemoved}개를 Deleted Items로 이동" : "")
+                  + (totalRuleSaved > 0 ? $", 규칙에 따라 {totalRuleSaved}개를 .eml 로 저장" : "");
         if (errors.Count > 0) msg += "  |  오류: " + string.Join(" / ", errors);
         SetStatus(msg);
 

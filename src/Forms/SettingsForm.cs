@@ -30,6 +30,13 @@ public class SettingsForm : DpiForm
     private readonly ListEditor _blockedDomains = new("이 도메인(하위 도메인 포함)에서 온 메일은 항상 Junk Email 로 이동합니다.", "도메인");
     private readonly ListEditor _keywords = new("제목에 있으면 +3점, 본문에 있으면 +1점 (키워드 점수 최대 8점)", "키워드");
 
+    private readonly CheckBox _ruleEnabled = new() { Text = "규칙 사용", AutoSize = true };
+    private readonly TextBox _ruleSender = new() { PlaceholderText = "예: boss@company.com" };
+    private readonly TextBox _ruleDir = new() { PlaceholderText = @"예: D:\Mail\boss" };
+    private readonly Button _ruleBrowse = new() { Text = "찾아보기...", AutoSize = true };
+    private TabControl? _tabs;
+    private TabPage? _rulePage;
+
     private int S(int logical) => LogicalToDeviceUnits(logical);
     private Padding S(int l, int t, int r, int b) => new(S(l), S(t), S(r), S(b));
 
@@ -48,9 +55,10 @@ public class SettingsForm : DpiForm
         ClientSize = new Size(S(660), S(560));
         MinimumSize = new Size(S(560), S(460));
 
-        var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(S(12), S(4)) };
+        var tabs = _tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(S(12), S(4)) };
         tabs.TabPages.Add(BuildGeneralTab());
         tabs.TabPages.Add(BuildJunkTab());
+        tabs.TabPages.Add(_rulePage = BuildRuleTab());
 
         // ---- 하단 버튼 ----
         var ok = new Button { Text = "확인", AutoSize = true, MinimumSize = new Size(S(92), S(30)), Margin = S(0, 0, 8, 0) };
@@ -82,9 +90,15 @@ public class SettingsForm : DpiForm
         _blockedSenders.Items = settings.Junk.BlockedSenders;
         _blockedDomains.Items = settings.Junk.BlockedDomains;
         _keywords.Items = settings.Junk.SpamKeywords;
+        var rule = settings.Rules.FirstOrDefault();
+        _ruleEnabled.Checked = rule?.Enabled ?? false;
+        _ruleSender.Text = rule?.Sender ?? "";
+        _ruleDir.Text = rule?.SaveDirectory ?? "";
 
         ok.Click += (_, _) =>
         {
+            if (!TryReadRule(out var rules)) return;
+            _settings.Rules = rules;
             _settings.CheckIntervalMinutes = (int)_interval.Value;
             _settings.CheckOnStartup = _checkOnStartup.Checked;
             _settings.ShowNotification = _notify.Checked;
@@ -245,6 +259,100 @@ public class SettingsForm : DpiForm
 
         page.Controls.Add(t);
         return page;
+    }
+
+    private TabPage BuildRuleTab()
+    {
+        var page = new TabPage("규칙") { UseVisualStyleBackColor = true };
+        var t = NewTable(3);
+        t.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        t.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        _ruleEnabled.Margin = S(0, 0, 0, 8);
+        AddAutoRow(t, _ruleEnabled, span: 3);
+        AddAutoRow(t, new Label
+        {
+            AutoSize = true, Dock = DockStyle.Fill, Margin = S(0, 0, 0, 12),
+            Text = "아래 보낸 사람에게서 새 메일이 오면 지정한 폴더에 .eml 파일로도 저장합니다."
+        }, span: 3);
+
+        Label FieldLabel(string text) => new() { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = S(0, 0, 10, 8) };
+
+        int row = t.RowCount++;
+        t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _ruleSender.Dock = DockStyle.Fill;
+        _ruleSender.Margin = S(0, 0, 0, 8);
+        t.Controls.Add(FieldLabel("보낸 사람"), 0, row);
+        t.Controls.Add(_ruleSender, 1, row);
+        t.SetColumnSpan(_ruleSender, 2);
+
+        row = t.RowCount++;
+        t.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        _ruleDir.Dock = DockStyle.Fill;
+        _ruleDir.Margin = S(0, 2, 0, 8);
+        _ruleBrowse.MinimumSize = new Size(S(90), S(28));
+        _ruleBrowse.Margin = S(6, 0, 0, 8);
+        t.Controls.Add(FieldLabel("저장할 폴더"), 0, row);
+        t.Controls.Add(_ruleDir, 1, row);
+        t.Controls.Add(_ruleBrowse, 2, row);
+
+        AddAutoRow(t, new Label
+        {
+            AutoSize = true, Dock = DockStyle.Fill, ForeColor = SystemColors.GrayText, Margin = S(0, 6, 0, 0),
+            Text = "· 보낸 사람(From) 주소가 같으면 저장합니다 (대소문자 무시).\n" +
+                   "· 파일 이름: 받은 날짜와 시각 + 제목 (예: 2026-11-27 093015 회의 자료.eml)\n" +
+                   "· 메일은 받은 편지함에도 그대로 들어옵니다. 정크 메일로 판정돼도 저장합니다.\n" +
+                   "· 규칙을 켠 뒤 새로 받는 메일에만 적용됩니다. 폴더가 없으면 만듭니다."
+        }, span: 3);
+
+        t.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        t.RowCount++;
+
+        _ruleBrowse.Click += (_, _) =>
+        {
+            using var dlg = new FolderBrowserDialog
+            {
+                Description = ".eml 파일을 저장할 폴더",
+                UseDescriptionForTitle = true,
+                InitialDirectory = MailRules.ResolveDirectory(_ruleDir.Text) is { } d && Directory.Exists(d) ? d : "",
+            };
+            if (dlg.ShowDialog(this) == DialogResult.OK) _ruleDir.Text = dlg.SelectedPath;
+        };
+        void Sync() => _ruleSender.Enabled = _ruleDir.Enabled = _ruleBrowse.Enabled = _ruleEnabled.Checked;
+        _ruleEnabled.CheckedChanged += (_, _) => Sync();
+        page.HandleCreated += (_, _) => Sync();
+
+        page.Controls.Add(t);
+        return page;
+    }
+
+    /// <summary>규칙 탭의 값을 검사해 설정에 넣을 규칙 목록을 만듭니다. 잘못된 값이면 안내하고 false.</summary>
+    private bool TryReadRule(out List<MailRule> rules)
+    {
+        // 지금 UI 는 첫 번째 규칙만 편집 (나머지는 그대로 유지)
+        rules = _settings.Rules.Skip(1).ToList();
+        var senderText = _ruleSender.Text.Trim();
+        var dirText = _ruleDir.Text.Trim();
+        if (!_ruleEnabled.Checked && senderText.Length == 0 && dirText.Length == 0) return true;   // 규칙 없음
+
+        var sender = MailRules.NormalizeAddress(senderText);
+        if (_ruleEnabled.Checked)
+        {
+            string? problem = null;
+            Control? focus = null;
+            if (sender == null) { problem = "보낸 사람의 이메일 주소를 입력하세요. (예: boss@company.com)"; focus = _ruleSender; }
+            else if (MailRules.ResolveDirectory(dirText) == null) { problem = @"저장할 폴더를 전체 경로로 지정하세요. (예: D:\Mail\boss)"; focus = _ruleDir; }
+            if (problem != null)
+            {
+                if (_tabs != null && _rulePage != null) _tabs.SelectedTab = _rulePage;
+                MessageBox.Show(this, problem, "규칙", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                focus?.Focus();
+                return false;
+            }
+        }
+        rules.Insert(0, new MailRule { Enabled = _ruleEnabled.Checked, Sender = sender ?? senderText, SaveDirectory = dirText });
+        return true;
     }
 
     private TabPage Page(string title, Control content)
