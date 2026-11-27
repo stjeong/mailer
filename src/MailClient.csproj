@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <RootNamespace>MailClient</RootNamespace>
+    <AssemblyName>MailClient</AssemblyName>
+    <Version>1.0.0</Version>
+    <!-- 실행 파일 아이콘 (탐색기, 바로 가기, 작업 표시줄) -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MailKit" Version="5.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.23" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 앱 기본 OAuth 클라이언트 ID (실행 파일에 포함) -->
+    <EmbeddedResource Include="oauth-clients.json" LogicalName="oauth-clients.json" />
+    <!-- 창·알림 영역 아이콘 (크기별 이미지를 그대로 쓰기 위해 리소스로도 포함) -->
+  </ItemGroup>
+
+</Project>

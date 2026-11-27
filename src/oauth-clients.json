@@ -1,0 +1,23 @@
+// 이 앱이 기본으로 사용하는 OAuth 클라이언트 (실행 파일에 포함되어 배포됨).
+//
+// - 클라이언트 ID 는 비밀이 아닙니다. 로그인 때 브라우저 주소에 그대로 나타나며, 데스크톱 앱(공용 클라이언트)은
+//   비밀을 지킬 수 없으므로 PKCE 로 보호합니다. 보호할 것은 사용자별 Refresh Token(DPAPI 로 암호화 저장)입니다.
+// - 값이 비어 있으면 사용자가 계정 창에서 "직접 등록한 클라이언트 ID"를 입력해야 합니다.
+// - 다시 빌드하지 않고 바꾸려면 같은 형식의 oauth-clients.json 을 MailClient.exe 옆에 두세요 (비어 있지 않은 값만 덮어씀).
+//
+// Microsoft: Entra 관리 센터 > 앱 등록
+//   - 지원 계정: "모든 조직 디렉터리의 계정 및 개인 Microsoft 계정"
+//   - 플랫폼: 모바일 및 데스크톱 애플리케이션, 리디렉션 URI http://localhost
+//   - 클라이언트 암호 없음 (공용 클라이언트)
+// Google: Google Cloud Console > OAuth 클라이언트 ID (데스크톱 앱), 범위 https://mail.google.com/
+//   - 데스크톱 앱의 클라이언트 보안 비밀은 Google 도 기밀로 취급하지 않습니다 (앱에 포함해도 됨).
+//   - 일반 공개 배포에는 Google 앱 검토와 보안 평가(CASA)가 필요합니다.
+{
+  "Microsoft": {
+    "ClientId": "ab968e6f-91bf-4bed-8049-7b4627758bf6"
+  },
+  "Google": {
+    "ClientId": "",
+    "ClientSecret": ""
+  }
+}
