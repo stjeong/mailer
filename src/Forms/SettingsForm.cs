@@ -51,6 +51,7 @@ public class SettingsForm : DpiForm
         Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HideSelection = false, MultiSelect = true, Margin = Padding.Empty
     };
     private readonly TextBox _senderFilter = new() { Dock = DockStyle.Fill, PlaceholderText = "검색 (이름 또는 주소)" };
+    private readonly Button _senderImport = new() { Text = "지금 추가(&I)", AutoSize = true };
     private readonly Button _senderDelete = new() { Text = "삭제(&R)", AutoSize = true };
     private readonly Label _senderCount = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
     private List<KnownSender> _senders = [];
@@ -369,14 +370,18 @@ public class SettingsForm : DpiForm
         _senderList.Columns.Add("주소", S(220));
         _senderList.Columns.Add("읽은 수", S(64), HorizontalAlignment.Right);
         _senderList.Columns.Add("마지막으로 읽음", S(120));
-        _senderDelete.MinimumSize = new Size(S(100), S(30));
-        _senderDelete.Margin = S(10, 0, 0, 0);
+        foreach (var b in new[] { _senderImport, _senderDelete })
+        {
+            b.MinimumSize = new Size(S(100), S(30));
+            b.Margin = S(10, 0, 0, 8);
+        }
+        new ToolTip().SetToolTip(_senderImport, "현재 계정들의 받은 편지함에서 이미 읽은 메일의 보낸 사람을 바로 추가합니다.");
         var buttons = new FlowLayoutPanel
         {
             FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Margin = Padding.Empty, Padding = Padding.Empty
         };
-        buttons.Controls.Add(_senderDelete);
+        buttons.Controls.AddRange([_senderImport, _senderDelete]);
         int row = t.RowCount++;
         t.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         t.Controls.Add(_senderList, 0, row);
@@ -398,6 +403,7 @@ public class SettingsForm : DpiForm
             }
         };
         _senderDelete.Click += (_, _) => DeleteSenders();
+        _senderImport.Click += (_, _) => ImportSenders(store);
         _senderFilter.TextChanged += (_, _) => ReloadSenders();
         _senderFilter.KeyDown += (_, e) =>
         {
@@ -416,6 +422,42 @@ public class SettingsForm : DpiForm
 
         page.Controls.Add(t);
         return page;
+    }
+
+    /// <summary>[지금 추가]: 받은 편지함의 읽은 메일에서 보낸 사람을 바로 저장하고 목록을 다시 읽음</summary>
+    private void ImportSenders(MailStore store)
+    {
+        (int Added, int Existing) result;
+        try
+        {
+            Cursor = Cursors.WaitCursor;
+            result = store.ImportSendersFromReadInbox(_settings.Accounts.Select(a => a.Id).ToList());
+            _senders = store.GetKnownSenders();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("import senders", ex);
+            MessageBox.Show(this, "보낸 사람을 추가하지 못했습니다.\n" + ex.Message, "보낸 사람", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+        }
+        ReloadSenders();
+        Log.Write($"Known senders imported from read Inbox mail: {result.Added} added, {result.Existing} already saved");
+
+        string message;
+        if (result.Added == 0 && result.Existing == 0)
+            message = "추가할 보낸 사람이 없습니다.\n받은 편지함에 읽은 메일이 없거나 모두 no-reply 주소입니다.";
+        else
+        {
+            message = result.Added > 0 ? $"보낸 사람 {result.Added}명을 새로 추가했습니다." : "새로 추가할 보낸 사람이 없습니다.";
+            if (result.Existing > 0) message += $"\n이미 저장돼 있던 {result.Existing}명은 중복으로 추가하지 않았습니다.";
+            int pending = _deletedSenders.Count;
+            if (pending > 0) message += $"\n\n삭제 예정인 {pending}명은 목록에 다시 표시하지 않으며, [확인]을 누르면 삭제됩니다.";
+        }
+        MessageBox.Show(this, message, "보낸 사람", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void ReloadSenders()

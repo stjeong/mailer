@@ -722,10 +722,8 @@ public sealed class MailStore : IDisposable
             foreach (var item in items)
             {
                 var address = item.FromAddress.Trim();
-                if (address.Length == 0 || !address.Contains('@') || IsNoReply(address)) continue;
-                var name = "";
-                if (InternetAddressList.TryParse(item.From, out var from))
-                    name = from.Mailboxes.FirstOrDefault(m => string.Equals(m.Address, address, StringComparison.OrdinalIgnoreCase))?.Name?.Trim() ?? "";
+                if (!IsSuggestable(address)) continue;
+                var name = SenderName(item.From, address);
                 Exec("""
                     INSERT INTO known_senders (address, name, read_count, last_read) VALUES ($a, $n, 1, $t)
                     ON CONFLICT(address) DO UPDATE SET
@@ -734,6 +732,71 @@ public sealed class MailStore : IDisposable
                         name       = CASE WHEN $n <> '' THEN $n ELSE name END
                     """, ("$a", address), ("$n", name), ("$t", now));
             }
+        }
+    }
+
+    private static bool IsSuggestable(string address) =>
+        address.Length > 0 && address.Contains('@') && !IsNoReply(address);
+
+    /// <summary>From 머리글 문자열에서 그 주소의 표시 이름</summary>
+    private static string SenderName(string from, string address) =>
+        InternetAddressList.TryParse(from, out var list)
+            ? list.Mailboxes.FirstOrDefault(m => string.Equals(m.Address, address, StringComparison.OrdinalIgnoreCase))?.Name?.Trim() ?? ""
+            : "";
+
+    /// <summary>
+    /// 지정한 계정들의 받은 편지함에서 이미 읽은 메일의 보낸 사람을 한 번에 추가합니다 (no-reply 제외).
+    /// 새 주소는 읽은 메일 수와 가장 최근 메일 날짜로 추가하고, 이미 있는 주소는 횟수·날짜 중 큰 값을 남기고
+    /// 이름이 비어 있으면 채웁니다 (같은 메일을 두 번 세지 않도록 더하지 않음).
+    /// </summary>
+    /// <returns>(새로 추가한 수, 이미 있던 주소 수)</returns>
+    public (int Added, int Existing) ImportSendersFromReadInbox(IReadOnlyCollection<string> accountIds)
+    {
+        if (accountIds.Count == 0) return (0, 0);
+        lock (_gate)
+        {
+            // 주소별: 이름(가장 최근 메일의 이름), 읽은 메일 수, 가장 최근 날짜
+            var found = new Dictionary<string, (string Name, int Count, DateTimeOffset Last)>(StringComparer.OrdinalIgnoreCase);
+            var ids = string.Join(", ", accountIds.Select((_, i) => "$a" + i));
+            using (var cmd = Cmd($"SELECT sender, sender_address, date FROM messages WHERE folder = $f AND is_read = 1 AND account_id IN ({ids})",
+                       [("$f", (int)MailFolder.Inbox), .. accountIds.Select((a, i) => ("$a" + i, (object?)a))]))
+            using (var r = cmd.ExecuteReader())
+            {
+                while (r.Read())
+                {
+                    var address = r.GetString(1).Trim();
+                    if (!IsSuggestable(address)) continue;
+                    DateTimeOffset.TryParse(r.GetString(2), CultureInfo.InvariantCulture, DateTimeStyles.None, out var date);
+                    var name = SenderName(r.GetString(0), address);
+                    if (found.TryGetValue(address, out var cur))
+                        found[address] = (date > cur.Last && name.Length > 0 ? name : cur.Name.Length > 0 ? cur.Name : name, cur.Count + 1,
+                            date > cur.Last ? date : cur.Last);
+                    else
+                        found[address] = (name, 1, date);
+                }
+            }
+
+            var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var cmd = Cmd("SELECT address FROM known_senders"))
+            using (var r = cmd.ExecuteReader())
+                while (r.Read()) existing.Add(r.GetString(0));
+
+            int added = 0, already = 0;
+            using var tx = _db.BeginTransaction();
+            foreach (var (address, (name, count, last)) in found)
+            {
+                if (existing.Contains(address)) already++; else added++;
+                var when = (last == default ? DateTimeOffset.Now : last.ToLocalTime()).ToString("o", CultureInfo.InvariantCulture);
+                Exec("""
+                    INSERT INTO known_senders (address, name, read_count, last_read) VALUES ($a, $n, $c, $t)
+                    ON CONFLICT(address) DO UPDATE SET
+                        read_count = MAX(read_count, $c),
+                        last_read  = CASE WHEN $t > last_read THEN $t ELSE last_read END,
+                        name       = CASE WHEN name = '' THEN $n ELSE name END
+                    """, ("$a", address), ("$n", name), ("$c", count), ("$t", when));
+            }
+            tx.Commit();
+            return (added, already);
         }
     }
 

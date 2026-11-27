@@ -10,7 +10,7 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <RootNamespace>MailClient</RootNamespace>
     <AssemblyName>MailClient</AssemblyName>
-    <Version>1.0.5</Version>
+    <Version>1.0.6</Version>
     <!-- 실행 파일 아이콘 (탐색기, 바로 가기, 작업 표시줄) -->
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
