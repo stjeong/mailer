@@ -44,12 +44,27 @@ public class SettingsForm : DpiForm
     private readonly List<MailRule> _rules;
     private bool _reloadingRules;
 
+    private readonly MailStore? _store;
+    /// <summary>저장된 보낸 사람 목록 (읽은 메일의 보낸 사람, 받는 사람 추천용)</summary>
+    private readonly ListView _senderList = new()
+    {
+        Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HideSelection = false, MultiSelect = true, Margin = Padding.Empty
+    };
+    private readonly TextBox _senderFilter = new() { Dock = DockStyle.Fill, PlaceholderText = "검색 (이름 또는 주소)" };
+    private readonly Button _senderDelete = new() { Text = "삭제(&R)", AutoSize = true };
+    private readonly Label _senderCount = new() { AutoSize = true, ForeColor = SystemColors.GrayText };
+    private List<KnownSender> _senders = [];
+    /// <summary>[확인]을 누르면 삭제할 주소</summary>
+    private readonly HashSet<string> _deletedSenders = new(StringComparer.OrdinalIgnoreCase);
+
     private int S(int logical) => LogicalToDeviceUnits(logical);
     private Padding S(int l, int t, int r, int b) => new(S(l), S(t), S(r), S(b));
 
-    public SettingsForm(AppSettings settings)
+    /// <param name="store">메일 저장소 (보낸 사람 탭). null 이면 그 탭을 표시하지 않음</param>
+    public SettingsForm(AppSettings settings, MailStore? store = null)
     {
         _settings = settings;
+        _store = store;
         _rules = settings.Rules.Select(Clone).ToList();
 
         SuspendLayout();
@@ -67,6 +82,7 @@ public class SettingsForm : DpiForm
         tabs.TabPages.Add(BuildGeneralTab());
         tabs.TabPages.Add(BuildJunkTab());
         tabs.TabPages.Add(BuildRuleTab());
+        if (store != null) tabs.TabPages.Add(BuildSenderTab(store));
 
         // ---- 하단 버튼 ----
         var ok = new Button { Text = "확인", AutoSize = true, MinimumSize = new Size(S(92), S(30)), Margin = S(0, 0, 8, 0) };
@@ -103,6 +119,7 @@ public class SettingsForm : DpiForm
         ok.Click += (_, _) =>
         {
             _settings.Rules = _rules.Select(Clone).ToList();
+            if (_store != null && _deletedSenders.Count > 0) _store.DeleteKnownSenders(_deletedSenders);
             _settings.CheckIntervalMinutes = (int)_interval.Value;
             _settings.CheckOnStartup = _checkOnStartup.Checked;
             _settings.ShowNotification = _notify.Checked;
@@ -309,7 +326,7 @@ public class SettingsForm : DpiForm
         }, span: 2);
 
         // 폴더 열은 남는 폭을 채움
-        _ruleList.Resize += (_, _) => FitRuleColumns();
+        _ruleList.Resize += (_, _) => FitFillColumn(_ruleList, 1);
         _ruleList.ItemChecked += (_, e) =>
         {
             if (_reloadingRules || e.Item.Tag is not MailRule r) return;
@@ -332,6 +349,119 @@ public class SettingsForm : DpiForm
         return page;
     }
 
+    private TabPage BuildSenderTab(MailStore store)
+    {
+        var page = new TabPage("보낸 사람") { UseVisualStyleBackColor = true };
+        var t = NewTable(2);
+        t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        t.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        AddAutoRow(t, new Label
+        {
+            AutoSize = true, Dock = DockStyle.Fill, Margin = S(0, 0, 0, 8),
+            Text = "받은 편지함에서 읽은 메일의 보낸 사람입니다. 메일 쓰기에서 받는 사람을 입력할 때 추천합니다.\n" +
+                   "no-reply 주소는 저장하지 않습니다. 삭제해도 그 사람의 메일을 다시 읽으면 다시 저장됩니다."
+        }, span: 2);
+        _senderFilter.Margin = S(0, 0, 0, 6);
+        AddAutoRow(t, _senderFilter);
+
+        _senderList.Columns.Add("이름", S(130));
+        _senderList.Columns.Add("주소", S(220));
+        _senderList.Columns.Add("읽은 수", S(64), HorizontalAlignment.Right);
+        _senderList.Columns.Add("마지막으로 읽음", S(120));
+        _senderDelete.MinimumSize = new Size(S(100), S(30));
+        _senderDelete.Margin = S(10, 0, 0, 0);
+        var buttons = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Margin = Padding.Empty, Padding = Padding.Empty
+        };
+        buttons.Controls.Add(_senderDelete);
+        int row = t.RowCount++;
+        t.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        t.Controls.Add(_senderList, 0, row);
+        t.Controls.Add(buttons, 1, row);
+        _senderCount.Margin = S(0, 6, 0, 0);
+        AddAutoRow(t, _senderCount, span: 2);
+
+        _senderList.Resize += (_, _) => FitFillColumn(_senderList, 1);
+        _senderList.SelectedIndexChanged += (_, _) => UpdateSenderState();
+        _senderList.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode == Keys.Delete) { DeleteSenders(); e.Handled = true; }
+            else if (e.Control && e.KeyCode == Keys.A)
+            {
+                _senderList.BeginUpdate();
+                foreach (ListViewItem i in _senderList.Items) i.Selected = true;
+                _senderList.EndUpdate();
+                e.Handled = e.SuppressKeyPress = true;
+            }
+        };
+        _senderDelete.Click += (_, _) => DeleteSenders();
+        _senderFilter.TextChanged += (_, _) => ReloadSenders();
+        _senderFilter.KeyDown += (_, e) =>
+        {
+            // ↓ 로 목록으로 이동
+            if (e.KeyCode == Keys.Down && _senderList.Items.Count > 0)
+            {
+                _senderList.Focus();
+                if (_senderList.SelectedItems.Count == 0) { _senderList.Items[0].Selected = true; _senderList.Items[0].Focused = true; }
+                e.Handled = true;
+            }
+        };
+
+        try { _senders = store.GetKnownSenders(); }
+        catch (Exception ex) { Log.Error("known senders", ex); }
+        ReloadSenders();
+
+        page.Controls.Add(t);
+        return page;
+    }
+
+    private void ReloadSenders()
+    {
+        var q = _senderFilter.Text.Trim();
+        var shown = _senders.Where(x => !_deletedSenders.Contains(x.Address) &&
+            (q.Length == 0 || x.Address.Contains(q, StringComparison.OrdinalIgnoreCase) || x.Name.Contains(q, StringComparison.OrdinalIgnoreCase)));
+        _senderList.BeginUpdate();
+        try
+        {
+            _senderList.Items.Clear();
+            foreach (var x in shown)
+            {
+                var last = x.LastRead == default ? "" : x.LastRead.LocalDateTime.ToString("yyyy-MM-dd HH:mm");
+                _senderList.Items.Add(new ListViewItem([x.Name, x.Address, x.ReadCount.ToString(), last]) { Tag = x });
+            }
+        }
+        finally { _senderList.EndUpdate(); }
+        UpdateSenderState();
+    }
+
+    private void UpdateSenderState()
+    {
+        int total = _senders.Count - _deletedSenders.Count;
+        var text = _senderList.Items.Count == total ? $"{total}명" : $"{total}명 중 {_senderList.Items.Count}명 표시";
+        if (_deletedSenders.Count > 0) text += $"  ·  삭제 예정 {_deletedSenders.Count}명 ([확인]을 누르면 삭제)";
+        _senderCount.Text = total == 0 && _deletedSenders.Count == 0 ? "저장된 보낸 사람이 없습니다." : text;
+        _senderDelete.Enabled = _senderList.SelectedItems.Count > 0;
+    }
+
+    private void DeleteSenders()
+    {
+        var selected = _senderList.SelectedItems.Cast<ListViewItem>().Select(i => i.Tag).OfType<KnownSender>().ToList();
+        if (selected.Count == 0) return;
+        int first = _senderList.SelectedIndices[0];
+        foreach (var x in selected) _deletedSenders.Add(x.Address);
+        ReloadSenders();
+        if (_senderList.Items.Count > 0)
+        {
+            var next = _senderList.Items[Math.Min(first, _senderList.Items.Count - 1)];
+            next.Selected = next.Focused = true;
+            next.EnsureVisible();
+        }
+        _senderList.Focus();
+    }
+
     private static MailRule Clone(MailRule r) => new() { Enabled = r.Enabled, Sender = r.Sender, SaveDirectory = r.SaveDirectory };
 
     /// <summary>
@@ -342,16 +472,19 @@ public class SettingsForm : DpiForm
     protected override void OnDpiRescaled(int oldDpi, int newDpi)
     {
         base.OnDpiRescaled(oldDpi, newDpi);
-        FitRuleColumns(force: true);
+        FitFillColumn(_ruleList, 1, force: true);
+        FitFillColumn(_senderList, 1, force: true);
     }
 
-    private void FitRuleColumns(bool force = false)
+    /// <summary>목록의 fill 번째 열이 나머지 폭을 채우도록</summary>
+    private void FitFillColumn(ListView list, int fill, bool force = false)
     {
-        if (_ruleList.Columns.Count < 2) return;
-        int rest = _ruleList.ClientSize.Width - _ruleList.Columns[0].Width;
+        if (list.Columns.Count <= fill) return;
+        int others = list.Columns.Cast<ColumnHeader>().Where(c => c.Index != fill).Sum(c => c.Width);
+        int rest = list.ClientSize.Width - others;
         if (rest <= S(80)) return;
-        if (force) _ruleList.Columns[1].Width = rest - 1;
-        _ruleList.Columns[1].Width = rest;
+        if (force) list.Columns[fill].Width = rest - 1;
+        list.Columns[fill].Width = rest;
     }
 
     private void ReloadRules(MailRule? select = null)

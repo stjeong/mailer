@@ -1673,11 +1673,13 @@ public class MainForm : DpiForm
     {
         // 설정 창은 복사본을 편집
         var copy = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(_settings, SettingsService.JsonOptions), SettingsService.JsonOptions)!;
-        using (var form = new SettingsForm(copy))
+        using (var form = new SettingsForm(copy, _store))
         {
             if (form.ShowDialog(this) != DialogResult.OK) return;
         }
 
+        // 규칙은 설정 내보내기(ExportedSettings)에 들어 있지 않으므로 따로 반영 (저장은 아래 ApplyToolSettings 에서)
+        _settings.Rules = copy.Rules;
         ApplyToolSettings(AccountExport.ExportedSettings.From(copy));
 
         // 메일 저장소 위치가 바뀌었으면 그 파일로 전환 (실패하면 설정도 그대로)

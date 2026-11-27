@@ -23,6 +23,9 @@ public sealed record ServerOp(long Seq, string AccountId, string MessageRef, Ser
 
 public enum ServerOpKind { MarkRead, MarkUnread, Move, Delete }
 
+/// <summary>받은 편지함에서 읽은 메일의 보낸 사람 (받는 사람 추천용)</summary>
+public sealed record KnownSender(string Address, string Name, int ReadCount, DateTimeOffset LastRead);
+
 /// <summary>
 /// SQLite 기반 로컬 메일 저장소 (%AppData%\MailClient\mail.db).
 /// <list type="bullet">
@@ -731,6 +734,36 @@ public sealed class MailStore : IDisposable
                         name       = CASE WHEN $n <> '' THEN $n ELSE name END
                     """, ("$a", address), ("$n", name), ("$t", now));
             }
+        }
+    }
+
+    /// <summary>저장된 보낸 사람 전체 (설정 창 목록용, 최근에 읽은 순)</summary>
+    public List<KnownSender> GetKnownSenders()
+    {
+        lock (_gate)
+        {
+            using var cmd = Cmd("SELECT address, name, read_count, last_read FROM known_senders ORDER BY last_read DESC");
+            using var r = cmd.ExecuteReader();
+            var list = new List<KnownSender>();
+            while (r.Read())
+            {
+                DateTimeOffset.TryParse(r.GetString(3), CultureInfo.InvariantCulture, DateTimeStyles.None, out var last);
+                list.Add(new KnownSender(r.GetString(0), r.GetString(1), r.GetInt32(2), last));
+            }
+            return list;
+        }
+    }
+
+    /// <summary>저장된 보낸 사람 삭제 (다시 그 사람의 메일을 읽으면 다시 저장됨)</summary>
+    public int DeleteKnownSenders(IEnumerable<string> addresses)
+    {
+        lock (_gate)
+        {
+            int n = 0;
+            using var tx = _db.BeginTransaction();
+            foreach (var a in addresses) n += Exec("DELETE FROM known_senders WHERE address = $a", ("$a", a));
+            tx.Commit();
+            return n;
         }
     }
 
