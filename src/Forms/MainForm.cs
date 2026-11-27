@@ -388,8 +388,12 @@ public class MainForm : DpiForm
             Directory.CreateDirectory(AppPaths.Root);
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(AppPaths.Root) { UseShellExecute = true });
         }));
+        _updateMenu = Item("최신 버전 업데이트(&U)...", async () => await CheckForUpdateAsync());
+        help.DropDownItems.Add(_updateMenu);
+        help.DropDownItems.Add(new ToolStripSeparator());
         help.DropDownItems.Add(Item("정보(&A)", () => MessageBox.Show(this,
-            "MailClient 1.0\n\nPOP3 / IMAP / SMTP 메일 클라이언트\n(.NET 9 Windows Forms, MailKit)\n\n데이터 위치: " + AppPaths.Root,
+            $"MailClient {UpdateService.CurrentVersionText}{(AppPaths.IsPackaged ? " (msix)" : "")}\n\n" +
+            "POP3 / IMAP / SMTP 메일 클라이언트\n(.NET 9 Windows Forms, MailKit)\n\n데이터 위치: " + AppPaths.Root,
             "정보", MessageBoxButtons.OK, MessageBoxIcon.Information)));
 
         _menu.Items.AddRange([file, msg, view, tools, help]);
@@ -2013,5 +2017,72 @@ public class MainForm : DpiForm
     {
         _status.Text = text;
         _status.ToolTipText = text;
+    }
+
+    // =====================================================================
+    // 업데이트 (도움말 > 최신 버전 업데이트)
+    // =====================================================================
+
+    private ToolStripMenuItem? _updateMenu;
+
+    private async Task CheckForUpdateAsync()
+    {
+        if (_updateMenu is { Enabled: false }) return;   // 이미 진행 중
+        if (_updateMenu != null) _updateMenu.Enabled = false;
+        try
+        {
+            SetStatus("최신 버전을 확인하는 중...");
+            var info = await UpdateService.CheckAsync();
+            if (IsDisposed) return;
+            if (info == null)
+            {
+                SetStatus("최신 버전입니다.");
+                MessageBox.Show(this, $"최신 버전을 사용하고 있습니다. (현재 {UpdateService.CurrentVersionText})",
+                    "최신 버전 업데이트", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var notes = info.Notes.Trim();
+            if (notes.Length > 600) notes = notes[..600] + "...";
+            var how = AppPaths.IsPackaged
+                ? "받은 뒤 앱 설치 관리자가 열립니다. [업데이트]를 누르면 프로그램이 닫히고 새 버전이 설치됩니다."
+                : "받은 뒤 프로그램을 닫고 새 파일로 바꾼 다음 다시 실행합니다.";
+            var answer = MessageBox.Show(this,
+                $"새 버전 {UpdateService.Display(info.Version)} 이(가) 있습니다. (현재 {UpdateService.CurrentVersionText})\n\n" +
+                (notes.Length > 0 ? notes + "\n\n" : "") +
+                $"지금 받아서 설치할까요? ({info.Size / 1024.0 / 1024.0:0.#} MB)\n{how}",
+                "최신 버전 업데이트", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (answer != DialogResult.Yes)
+            {
+                SetStatus("업데이트를 취소했습니다.");
+                return;
+            }
+
+#if DEBUG
+            // 개발 중인 빌드 폴더를 배포 파일로 덮어쓰지 않도록
+            SetStatus("디버그 빌드에서는 설치하지 않습니다.");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(info.ReleaseUrl) { UseShellExecute = true });
+            return;
+#else
+            var progress = new Progress<double>(p => SetStatus($"업데이트를 받는 중... {p:P0}"));
+            var file = await UpdateService.DownloadAsync(info, progress);
+            if (IsDisposed) return;
+            SetStatus("업데이트를 설치합니다...");
+            UpdateService.StartInstall(file);
+            Close();
+#endif
+        }
+        catch (Exception ex)
+        {
+            Log.Error("update", ex);
+            if (IsDisposed) return;
+            SetStatus("업데이트하지 못했습니다.");
+            MessageBox.Show(this, ex is UpdateException ? ex.Message : "업데이트하지 못했습니다.\n" + ex.Message,
+                "최신 버전 업데이트", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (_updateMenu != null && !_updateMenu.IsDisposed) _updateMenu.Enabled = true;
+        }
     }
 }

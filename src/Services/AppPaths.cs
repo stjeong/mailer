@@ -22,6 +22,23 @@ public static class AppPaths
 
     public static bool SamePath(string a, string b) =>
         string.Equals(Path.GetFullPath(a).TrimEnd('\\'), Path.GetFullPath(b).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>MSIX 로 설치되어 패키지 ID 를 가지고 실행 중인지 (zip 으로 실행하면 false)</summary>
+    public static bool IsPackaged { get; } = DetectPackage();
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int GetCurrentPackageFullName(ref int packageFullNameLength, char[]? packageFullName);
+
+    private static bool DetectPackage()
+    {
+        const int AppModelErrorNoPackage = 15700;
+        try
+        {
+            int length = 0;
+            return GetCurrentPackageFullName(ref length, null) != AppModelErrorNoPackage;
+        }
+        catch { return false; }
+    }
 }
 
 public static class Log

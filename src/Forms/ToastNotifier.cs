@@ -30,16 +30,13 @@ internal static class ToastNotifier
     private static readonly List<ToastNotification> Recent = [];
     private static bool _registered;
 
-    /// <summary>MSIX 로 설치되어 패키지 ID 를 가지고 실행 중인지</summary>
-    private static readonly bool IsPackaged = DetectPackage();
-
     /// <summary>새 메일 알림을 표시합니다. 표시할 수 없으면(알림 꺼짐, 오류) false.</summary>
     public static bool ShowNewMail(IReadOnlyList<MailItem> items, int totalNew)
     {
         try
         {
             EnsureRegistered();
-            var notifier = IsPackaged
+            var notifier = AppPaths.IsPackaged
                 ? ToastNotificationManager.CreateToastNotifier()
                 : ToastNotificationManager.CreateToastNotifier(AppId);
             // 사용자가 이 앱의 알림을 껐으면 표시하지 않음. 바로 가기 없이 실행하는 앱은 이 값을 읽을 때
@@ -82,7 +79,7 @@ internal static class ToastNotifier
         if (!_registered) return;
         try
         {
-            if (IsPackaged) ToastNotificationManager.History.RemoveGroup(Group);
+            if (AppPaths.IsPackaged) ToastNotificationManager.History.RemoveGroup(Group);
             else ToastNotificationManager.History.RemoveGroup(Group, AppId);
         }
         catch (Exception ex) { Log.Error("toast clear", ex); }
@@ -124,7 +121,7 @@ internal static class ToastNotifier
     private static void EnsureRegistered()
     {
         if (_registered) return;
-        if (IsPackaged) { _registered = true; return; }
+        if (AppPaths.IsPackaged) { _registered = true; return; }
         var iconPath = Path.Combine(AppPaths.Root, "toast-icon.png");
         try
         {
@@ -138,19 +135,5 @@ internal static class ToastNotifier
         key.SetValue("DisplayName", "MailClient");
         if (File.Exists(iconPath)) key.SetValue("IconUri", iconPath);
         _registered = true;
-    }
-
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-    private static extern int GetCurrentPackageFullName(ref int packageFullNameLength, char[]? packageFullName);
-
-    private static bool DetectPackage()
-    {
-        const int AppModelErrorNoPackage = 15700;
-        try
-        {
-            int length = 0;
-            return GetCurrentPackageFullName(ref length, null) != AppModelErrorNoPackage;
-        }
-        catch { return false; }
     }
 }
