@@ -10,3 +10,8 @@ obj/
 requirements.txt
 # Project requirements notes (never pushed)
 requirements.txt
+
+# Packaging output
+artifacts/
+dist/
+*.pfx

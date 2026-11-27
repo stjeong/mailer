@@ -1,0 +1,100 @@
+# 릴리스 빌드: msix (서명) + zip (포터블)
+#
+# - v1.2.3 형식의 태그를 push 하면 빌드 후 GitHub Release 를 만들고 파일을 올립니다.
+#     git tag v1.2.3 && git push origin v1.2.3
+# - Actions 탭에서 수동 실행(workflow_dispatch)하면 빌드 결과를 Actions 아티팩트로만 올립니다.
+#
+# 서명 인증서 (저장소 Settings > Secrets and variables > Actions):
+#   MSIX_CERTIFICATE           .pfx 파일을 base64 로 인코딩한 값
+#   MSIX_CERTIFICATE_PASSWORD  .pfx 암호
+# 없으면 실행할 때마다 임시 자체 서명 인증서로 서명합니다 (릴리스마다 인증서가 바뀜).
+
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '버전 (예: 1.2.3). 비우면 csproj 의 Version'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: 버전 결정
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $v = $env:GITHUB_REF_NAME -replace '^v', ''
+          } elseif ('${{ inputs.version }}') {
+            $v = '${{ inputs.version }}'
+          } else {
+            $v = ([xml](Get-Content src/MailClient.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "버전 형식이 올바르지 않습니다: $v" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: 서명 인증서 준비
+        id: cert
+        shell: pwsh
+        env:
+          CERT_BASE64: ${{ secrets.MSIX_CERTIFICATE }}
+        run: |
+          if ($env:CERT_BASE64) {
+            $path = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+            [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:CERT_BASE64))
+            "path=$path" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host '::warning::MSIX_CERTIFICATE 시크릿이 없어 임시 자체 서명 인증서로 서명합니다.'
+          }
+
+      - name: 게시 및 패키징
+        shell: pwsh
+        env:
+          CERT_PASSWORD: ${{ secrets.MSIX_CERTIFICATE_PASSWORD }}
+        run: |
+          $params = @{ Version = '${{ steps.ver.outputs.version }}'; Arch = 'x64' }
+          if ('${{ steps.cert.outputs.path }}') {
+            $params.CertificatePath = '${{ steps.cert.outputs.path }}'
+            $params.CertificatePassword = $env:CERT_PASSWORD
+          }
+          ./build/Package.ps1 @params
+
+      - name: 인증서 파일 삭제
+        if: always()
+        shell: pwsh
+        run: Remove-Item (Join-Path $env:RUNNER_TEMP 'signing.pfx') -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MailClient-${{ steps.ver.outputs.version }}
+          path: dist/*
+
+      - name: GitHub Release 만들기
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $files = Get-ChildItem dist | ForEach-Object FullName
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --clobber
+          } else {
+            gh release create $tag @files --title "MailClient $tag" --generate-notes
+          }

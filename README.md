@@ -6,6 +6,27 @@ Visual Studio 2022 (17.12+) / C# / .NET 9.0 / Windows Forms 메일 클라이언�
 - `MailClient.sln` 을 Visual Studio 2022에서 열고 F5
 - 또는 `dotnet run --project MailClient`
 
+## 릴리스 (msix / zip)
+`.github/workflows/release.yml` 이 GitHub Actions 에서 빌드합니다. 패키징은 `build/Package.ps1` 이 하므로 로컬에서도 같은 결과를 만들 수 있습니다.
+- `v1.2.3` 형식의 태그를 push 하면 GitHub Release 를 만들고 다음 파일을 올립니다.
+  ```
+  git tag v1.2.3
+  git push origin v1.2.3
+  ```
+  - `MailClient-1.2.3-x64.msix`: 서명된 설치 패키지
+  - `MailClient-1.2.3-win-x64.zip`: 압축을 풀고 `MailClient.exe` 실행 (.NET 런타임 포함, 설치 불필요)
+  - `MailClient.cer`: msix 서명 인증서 (공개 키)
+- Actions 탭에서 수동 실행하면 Release 없이 Actions 아티팩트로만 올립니다.
+- 로컬: `pwsh build/Package.ps1 -Version 1.2.3 [-CertificatePath x.pfx -CertificatePassword ...]` → `dist/`
+
+서명 인증서는 저장소 시크릿 `MSIX_CERTIFICATE`(.pfx 를 base64 로 인코딩한 값)와 `MSIX_CERTIFICATE_PASSWORD` 로 지정합니다.
+없으면 빌드할 때마다 임시 자체 서명 인증서(`CN=MailClient`)로 서명하므로, 릴리스마다 인증서를 다시 신뢰해야 합니다.
+
+자체 서명 msix 설치: `MailClient.cer` 를 **로컬 컴퓨터 > 신뢰할 수 있는 사람** 저장소에 가져온 뒤(관리자 권한) msix 를 엽니다.
+
+msix 로 설치하면 `%AppData%\MailClient\` 에 새로 만드는 파일이 패키지 전용 위치로 리디렉션되어, 앱을 제거하면 함께 지워집니다.
+zip 버전과 데이터를 공유하려면 메일 저장소 위치나 `MAILCLIENT_DATA` 를 지정하세요.
+
 ## 기능
 | 기능 | 위치 |
 |---|---|
