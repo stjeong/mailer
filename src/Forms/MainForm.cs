@@ -391,10 +391,11 @@ public class MainForm : DpiForm
         _updateMenu = Item("최신 버전 업데이트(&U)...", async () => await CheckForUpdateAsync());
         help.DropDownItems.Add(_updateMenu);
         help.DropDownItems.Add(new ToolStripSeparator());
-        help.DropDownItems.Add(Item("정보(&A)", () => MessageBox.Show(this,
-            $"MailClient {UpdateService.CurrentVersionText}{(AppPaths.IsPackaged ? " (msix)" : "")}\n\n" +
-            "POP3 / IMAP / SMTP 메일 클라이언트\n(.NET 9 Windows Forms, MailKit)\n\n데이터 위치: " + AppPaths.Root,
-            "정보", MessageBoxButtons.OK, MessageBoxIcon.Information)));
+        help.DropDownItems.Add(Item("정보(&A)", () =>
+        {
+            using var about = new AboutForm();
+            about.ShowDialog(this);
+        }));
 
         _menu.Items.AddRange([file, msg, view, tools, help]);
     }
