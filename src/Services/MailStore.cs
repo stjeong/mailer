@@ -35,7 +35,7 @@ public enum ServerOpKind { MarkRead, MarkUnread, Move, Delete }
 /// </summary>
 public sealed class MailStore : IDisposable
 {
-    private const int SchemaVersion = 3;
+    private const int SchemaVersion = 4;
 
     private readonly object _gate = new();
     private readonly SqliteConnection _db;
@@ -180,6 +180,15 @@ public sealed class MailStore : IDisposable
                 created   TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS ix_messages_archive ON messages (folder, archive_folder);
+            """);
+        // v4: 받은 편지함에서 읽은 메일의 보낸 사람 (메일 쓰기의 받는 사람 추천용)
+        Exec("""
+            CREATE TABLE IF NOT EXISTS known_senders (
+                address    TEXT    PRIMARY KEY COLLATE NOCASE,
+                name       TEXT    NOT NULL DEFAULT '',
+                read_count INTEGER NOT NULL DEFAULT 0,
+                last_read  TEXT    NOT NULL
+            );
             """);
 
         if (Scalar<long>("SELECT COUNT(*) FROM schema_info") == 0)
@@ -680,9 +689,69 @@ public sealed class MailStore : IDisposable
         }
     }
 
-    public void SetRead(IEnumerable<MailItem> items, bool read) =>
-        UpdateEach(items, "UPDATE messages SET is_read = $r WHERE id = $id AND is_read <> $r",
+    public void SetRead(IEnumerable<MailItem> items, bool read)
+    {
+        var list = items.ToList();
+        UpdateEach(list, "UPDATE messages SET is_read = $r WHERE id = $id AND is_read <> $r",
             (read ? ServerOpKind.MarkRead : ServerOpKind.MarkUnread, MailFolder.Inbox), ("$r", read ? 1 : 0));
+        if (read) RememberSenders(list.Where(i => i.Folder == MailFolder.Inbox));
+    }
+
+    // =====================================================================
+    // 읽은 메일의 보낸 사람 (받는 사람 추천)
+    // =====================================================================
+
+    /// <summary>자동 발송 주소 (no-reply, noreply, do-not-reply 등): 받는 사람으로 추천하지 않음</summary>
+    public static bool IsNoReply(string address)
+    {
+        int at = address.IndexOf('@');
+        var local = (at >= 0 ? address[..at] : address).ToLowerInvariant();
+        var compact = new string(local.Where(char.IsLetterOrDigit).ToArray());
+        return compact.Contains("noreply") || compact.Contains("donotreply");
+    }
+
+    /// <summary>받은 편지함에서 읽은 메일의 보낸 사람을 기록 (no-reply 주소 제외)</summary>
+    private void RememberSenders(IEnumerable<MailItem> items)
+    {
+        var now = DateTimeOffset.Now.ToString("o", CultureInfo.InvariantCulture);
+        lock (_gate)
+        {
+            foreach (var item in items)
+            {
+                var address = item.FromAddress.Trim();
+                if (address.Length == 0 || !address.Contains('@') || IsNoReply(address)) continue;
+                var name = "";
+                if (InternetAddressList.TryParse(item.From, out var from))
+                    name = from.Mailboxes.FirstOrDefault(m => string.Equals(m.Address, address, StringComparison.OrdinalIgnoreCase))?.Name?.Trim() ?? "";
+                Exec("""
+                    INSERT INTO known_senders (address, name, read_count, last_read) VALUES ($a, $n, 1, $t)
+                    ON CONFLICT(address) DO UPDATE SET
+                        read_count = read_count + 1,
+                        last_read  = $t,
+                        name       = CASE WHEN $n <> '' THEN $n ELSE name END
+                    """, ("$a", address), ("$n", name), ("$t", now));
+            }
+        }
+    }
+
+    /// <summary>주소나 이름에 text 가 들어 있는 보낸 사람 (자주·최근에 읽은 순)</summary>
+    public List<(string Address, string Name)> SearchKnownSenders(string text, int limit)
+    {
+        var escaped = text.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+        lock (_gate)
+        {
+            using var cmd = Cmd("""
+                SELECT address, name FROM known_senders
+                WHERE address LIKE $p ESCAPE '\' OR name LIKE $p ESCAPE '\'
+                ORDER BY read_count DESC, last_read DESC
+                LIMIT $n
+                """, ("$p", "%" + escaped + "%"), ("$n", limit));
+            using var r = cmd.ExecuteReader();
+            var list = new List<(string, string)>();
+            while (r.Read()) list.Add((r.GetString(0), r.GetString(1)));
+            return list;
+        }
+    }
 
     public void SetJunkFlag(MailItem item, bool junk)
     {

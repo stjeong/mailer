@@ -140,7 +140,13 @@ public class ComposeForm : DpiForm
         // 값을 채운 뒤에 연결하므로 이후의 변경은 모두 사용자가 입력한 것
         _subject.TextChanged += (_, _) => { Text = string.IsNullOrEmpty(_subject.Text) ? "새 메일" : _subject.Text; ContentChanged(startsDraft: true); };
         _body.TextChanged += (_, _) => ContentChanged(startsDraft: true);
-        foreach (var tb in new[] { _to, _cc, _bcc }) tb.TextChanged += (_, _) => ContentChanged(startsDraft: false);
+        foreach (var tb in new[] { _to, _cc, _bcc })
+        {
+            tb.TextChanged += (_, _) => ContentChanged(startsDraft: false);
+            // 받은 편지함에서 읽은 메일의 보낸 사람 중 입력한 글자가 들어 있는 주소를 추천
+            var suggest = new AddressSuggest(tb, (text, limit) => _store.SearchKnownSenders(text, limit));
+            FormClosed += (_, _) => suggest.Dispose();
+        }
         _from.SelectedIndexChanged += (_, _) => ContentChanged(startsDraft: false);
         _draftTimer.Tick += (_, _) => SaveDraftNow();
 
