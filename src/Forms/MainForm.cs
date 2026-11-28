@@ -1460,6 +1460,8 @@ public class MainForm : DpiForm
         var ids = items.Select(i => i.Id).ToHashSet();
         int anchor = _list.Items.Cast<ListViewItem>().Where(lvi => ids.Contains(((MailItem)lvi.Tag!).Id))
                           .Select(lvi => lvi.Index).DefaultIfEmpty(-1).Min();
+        // 그 항목의 화면 위치. 목록을 다시 그리면 스크롤이 맨 위로 돌아가 다음 항목이 맨 아래 줄에 보이므로 같은 높이로 되돌림
+        int anchorTop = anchor >= 0 ? _list.Items[anchor].Bounds.Top : 0;
 
         if (items.All(i => i.Folder == MailFolder.DeletedItems))
         {
@@ -1476,11 +1478,19 @@ public class MainForm : DpiForm
             MoveItems(items.Where(i => i.Folder != MailFolder.DeletedItems).ToList(), MailFolder.DeletedItems);
         }
 
-        if (anchor >= 0) SelectListIndex(Math.Min(anchor, _list.Items.Count - 1));
+        if (anchor >= 0) SelectListIndex(Math.Min(anchor, _list.Items.Count - 1), anchorTop);
     }
 
-    /// <summary>목록의 한 항목만 선택하고 보이게 스크롤 (index 가 음수면 아무것도 선택하지 않음)</summary>
-    private void SelectListIndex(int index)
+    private const int LVM_SCROLL = 0x1014;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>
+    /// 목록의 한 항목만 선택하고 보이게 스크롤 (index 가 음수면 아무것도 선택하지 않음).
+    /// keepTop 을 주면 그 항목이 목록 안에서 그 높이(px)에 오도록 스크롤 (목록 처음/끝에서는 가능한 만큼)
+    /// </summary>
+    private void SelectListIndex(int index, int? keepTop = null)
     {
         if (index < 0 || index >= _list.Items.Count) return;
         _list.BeginUpdate();
@@ -1490,6 +1500,19 @@ public class MainForm : DpiForm
         item.Focused = true;
         _list.EndUpdate();
         item.EnsureVisible();
+        if (keepTop is { } top && top >= 0 && top < _list.ClientSize.Height)
+        {
+            // 자세히 보기는 줄 단위로만 스크롤되고 구획 머리글 높이도 섞여 한 번에 정확히 맞지 않으므로 남은 차이를 몇 번 더 보정
+            int rowHeight = Math.Max(1, item.Bounds.Height);
+            for (int i = 0; i < 3; i++)
+            {
+                int delta = item.Bounds.Top - top;   // 양수: 아래로 스크롤해야 항목이 위로 올라감
+                if (Math.Abs(delta) <= rowHeight / 2) break;
+                int was = item.Bounds.Top;
+                SendMessage(_list.Handle, LVM_SCROLL, IntPtr.Zero, delta);
+                if (item.Bounds.Top == was) break;   // 목록 처음/끝이라 더 움직이지 않음
+            }
+        }
         if (ContainsFocus && !_list.Focused && ActiveControl is not TextBoxBase) _list.Focus();   // 계속 Delete 키로 지울 수 있도록
     }
 
