@@ -26,6 +26,16 @@ public static class MailRules
         return Path.IsPathFullyQualified(expanded) ? Path.GetFullPath(expanded) : null;
     }
 
+    /// <summary>같은 보낸 사람 + 같은 폴더 규칙이 이미 있으면 오류 문구 (self 는 편집 중인 규칙이라 제외)</summary>
+    public static string? DuplicateError(IEnumerable<MailRule> rules, MailRule candidate, MailRule? self)
+    {
+        var dir = ResolveDirectory(candidate.SaveDirectory);
+        bool dup = rules.Any(r => !ReferenceEquals(r, self)
+                                  && string.Equals(r.Sender, candidate.Sender, StringComparison.OrdinalIgnoreCase)
+                                  && ResolveDirectory(r.SaveDirectory) is { } d && dir != null && AppPaths.SamePath(d, dir));
+        return dup ? "같은 보낸 사람과 폴더의 규칙이 이미 있습니다." : null;
+    }
+
     public static bool IsComplete(MailRule rule) =>
         NormalizeAddress(rule.Sender) != null && ResolveDirectory(rule.SaveDirectory) != null;
 

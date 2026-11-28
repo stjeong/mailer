@@ -486,6 +486,7 @@ public class MainForm : DpiForm
         var forward = Item("전달", Forward);
         var read = Item("읽음으로 표시", () => MarkRead(true));
         var unread = Item("읽지 않음으로 표시", () => MarkRead(false));
+        var createRule = Item("규칙 작성...", CreateRuleFromSelected);
         _ctxMove = new ToolStripMenuItem("다른 폴더로 이동");
         _ctxMove.DropDownItems.Add("(없음)");
         _ctxMove.DropDownOpening += (_, _) => FillMoveMenu(_ctxMove);
@@ -500,7 +501,7 @@ public class MainForm : DpiForm
         var saveAs = Item("다른 이름으로 저장(.eml)...", SaveSelectedAs);
 
         ctx.Items.AddRange([open, reply, replyAll, forward, new ToolStripSeparator(), read, unread,
-            new ToolStripSeparator(), _ctxMove, delete, restore, new ToolStripSeparator(), junk, notJunk,
+            new ToolStripSeparator(), createRule, _ctxMove, delete, restore, new ToolStripSeparator(), junk, notJunk,
             new ToolStripSeparator(), safe, safeDomain, block, blockDomain, new ToolStripSeparator(), saveAs]);
 
         ctx.Opening += (_, e) =>
@@ -518,6 +519,9 @@ public class MainForm : DpiForm
             notJunk.Visible = folder == MailFolder.JunkEmail;
             bool incoming = !(folder?.ShowsRecipients() ?? false);
             safe.Visible = safeDomain.Visible = block.Visible = blockDomain.Visible = incoming;
+            // 받은 메일 하나를 골랐을 때 그 보낸 사람으로 규칙 작성
+            createRule.Visible = incoming && !drafts;
+            createRule.Enabled = single && MailRules.NormalizeAddress(sel[0].FromAddress) != null;
             delete.Text = folder == MailFolder.DeletedItems ? "영구 삭제" : "삭제";
         };
         _list.ContextMenuStrip = ctx;
@@ -1404,6 +1408,20 @@ public class MainForm : DpiForm
         if (!item.IsRead) _store.SetRead([item], true);
         SetNewMailIndicator(false);
         new MessageForm(this, item, msg).Show();
+    }
+
+    /// <summary>우클릭 > 규칙 작성: 보낸 사람을 채운 "규칙 추가" 창을 열고, [확인]하면 바로 규칙에 추가해 저장</summary>
+    private void CreateRuleFromSelected()
+    {
+        var item = SingleSelected();
+        var sender = item == null ? null : MailRules.NormalizeAddress(item.FromAddress);
+        if (sender == null) return;
+        using var dlg = new RuleEditForm(new MailRule { Sender = sender },
+            r => MailRules.DuplicateError(_settings.Rules, r, null), isNew: true);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        _settings.Rules = [.. _settings.Rules, dlg.Rule];   // 새 목록으로 바꿔 메일 확인 중에도 안전하게
+        SaveSettings();
+        SetStatus($"규칙을 추가했습니다: {dlg.Rule.Sender} → {dlg.Rule.SaveDirectory} (도구 > 설정 > 규칙에서 편집)");
     }
 
     private void SaveSelectedAs()

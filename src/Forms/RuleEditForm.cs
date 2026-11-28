@@ -20,13 +20,14 @@ public class RuleEditForm : DpiForm
 
     /// <param name="rule">편집할 규칙 (null 이면 새 규칙)</param>
     /// <param name="validate">추가 검사 (예: 중복). 오류 문구, 문제 없으면 null</param>
-    public RuleEditForm(MailRule? rule, Func<MailRule, string?>? validate = null)
+    /// <param name="isNew">rule 을 미리 채운 새 규칙으로 여김 (제목 "규칙 추가")</param>
+    public RuleEditForm(MailRule? rule, Func<MailRule, string?>? validate = null, bool isNew = false)
     {
         _validate = validate;
         Rule = rule ?? new MailRule();
 
         SuspendLayout();
-        Text = rule == null ? "규칙 추가" : "규칙 편집";
+        Text = rule == null || isNew ? "규칙 추가" : "규칙 편집";
         Font = new Font("Malgun Gothic", 9f);
         AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.FixedDialog;
