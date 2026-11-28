@@ -12,6 +12,9 @@ public class SettingsForm : DpiForm
     private readonly AppSettings _settings;
 
     private readonly NumericUpDown _interval = new() { Minimum = 1, Maximum = 1440, TextAlign = HorizontalAlignment.Right };
+    private readonly CheckBox _runAtStartup = new() { Text = "Windows 시작 시 자동 실행 (Run at startup)", AutoSize = true };
+    private readonly ToolTip _runAtStartupTip = new();
+    private bool _runAtStartupWas;
     private readonly CheckBox _checkOnStartup = new() { Text = "프로그램 시작 시 메일 확인", AutoSize = true };
     private readonly CheckBox _notify = new() { Text = "새 메일 도착 시 알림 표시", AutoSize = true };
     private readonly CheckBox _confirmDelete = new() { Text = "영구 삭제 전에 확인", AutoSize = true };
@@ -103,6 +106,7 @@ public class SettingsForm : DpiForm
 
         // 값 로드
         _interval.Value = Math.Clamp(settings.CheckIntervalMinutes, 1, 1440);
+        LoadRunAtStartup();
         _checkOnStartup.Checked = settings.CheckOnStartup;
         _notify.Checked = settings.ShowNotification;
         _confirmDelete.Checked = settings.ConfirmPermanentDelete;
@@ -119,6 +123,7 @@ public class SettingsForm : DpiForm
 
         ok.Click += (_, _) =>
         {
+            ApplyRunAtStartup();
             _settings.Rules = _rules.Select(Clone).ToList();
             if (_store != null && _deletedSenders.Count > 0) _store.DeleteKnownSenders(_deletedSenders);
             _settings.CheckIntervalMinutes = (int)_interval.Value;
@@ -138,6 +143,49 @@ public class SettingsForm : DpiForm
             Close();
         };
         ResumeLayout(true);
+    }
+
+    /// <summary>자동 실행 체크는 레지스트리(Run 키)의 현재 상태로 표시</summary>
+    private void LoadRunAtStartup()
+    {
+        if (!StartupRegistration.IsSupported)
+        {
+            _runAtStartup.Enabled = false;
+            _runAtStartup.Text += " - msix 설치 버전에서는 지원하지 않음";
+            return;
+        }
+        try
+        {
+            _runAtStartupWas = _runAtStartup.Checked = StartupRegistration.IsEnabled();
+            var registered = StartupRegistration.RegisteredCommand();
+            _runAtStartupTip.SetToolTip(_runAtStartup, registered == null
+                ? @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run 에 이 프로그램을 등록합니다."
+                : "등록된 명령: " + registered +
+                  (StartupRegistration.PointsElsewhere() ? "\n(지금 실행 중인 프로그램과 위치가 다릅니다. [확인]을 누르면 이 위치로 바꿉니다.)" : ""));
+        }
+        catch (Exception ex)
+        {
+            Log.Error("run at startup read", ex);
+            _runAtStartup.Enabled = false;
+        }
+    }
+
+    /// <summary>[확인]: 바뀌었거나 다른 위치를 가리키면 레지스트리에 반영 (실패해도 다른 설정은 저장)</summary>
+    private void ApplyRunAtStartup()
+    {
+        if (!_runAtStartup.Enabled) return;
+        bool want = _runAtStartup.Checked;
+        try
+        {
+            if (want != _runAtStartupWas || (want && StartupRegistration.PointsElsewhere()))
+                StartupRegistration.SetEnabled(want);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("run at startup write", ex);
+            MessageBox.Show(this, "Windows 시작 시 자동 실행 설정을 바꾸지 못했습니다.\n" + ex.Message, "설정",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private TableLayoutPanel NewTable(int columns)
@@ -175,7 +223,7 @@ public class SettingsForm : DpiForm
         var t = NewTable(1);
         t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddAutoRow(t, NumberRow("새 메일 확인 주기", _interval, 80, "분마다 (1~1440, 기본 5분)"));
-        foreach (var cb in new[] { _checkOnStartup, _notify, _confirmDelete, _htmlLeftAlign })
+        foreach (var cb in new[] { _runAtStartup, _checkOnStartup, _notify, _confirmDelete, _htmlLeftAlign })
         {
             cb.Margin = S(0, 4, 0, 4);
             AddAutoRow(t, cb);
